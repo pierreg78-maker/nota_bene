@@ -233,7 +233,7 @@ body.sb-collapsed #main{margin-left:74px}
 .swatch.sel{outline:2px solid var(--text2);outline-offset:2px}
 .swatch .ms{font-size:17px;color:#202124}
 
-/* ============ Modal — structure plein écran mobile ============ */
+/* ============ Modal — plein écran mobile, pied fixe ============ */
 #modalScrim{position:fixed;inset:0;background:var(--scrim);z-index:150;display:flex;
   align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto}
 #modalBox{background:var(--card);border-radius:14px;box-shadow:var(--sh2);width:100%;max-width:900px;
@@ -248,7 +248,6 @@ body.sb-collapsed #main{margin-left:74px}
   color:var(--text2);display:flex;gap:7px;align-items:center;transition:.15s;font-size:13.5px}
 .seg button.on{background:var(--card);color:var(--text);box-shadow:var(--sh1)}
 .seg-hint{font-size:10px;font-weight:700;border:1px solid var(--line);padding:1px 6px;border-radius:9px;color:var(--text2)}
-/* Une SEULE zone de défilement : .pub-body. Le pied reste fixe. */
 .pub-body{display:grid;grid-template-columns:1fr 330px;flex:1;min-height:0;overflow-y:auto}
 .pub-form{padding:18px 22px 22px;border-right:1px solid var(--line)}
 .pub-preview{padding:18px 20px;background:var(--search)}
@@ -455,6 +454,10 @@ input[type=checkbox]{accent-color:var(--text);width:16px;height:16px;flex:none}
 
 <script>
 'use strict';
+/* ================= Version (visible dans le profil) ================= */
+const APP_VERSION='v3.3';
+console.log('Keep — '+APP_VERSION);
+
 /* ================= Utilitaires ================= */
 const $=s=>document.querySelector(s);
 const el=(t,c,txt)=>{const e=document.createElement(t);if(c)e.className=c;if(txt!=null)e.textContent=txt;return e};
@@ -498,7 +501,6 @@ const ICONS=['lightbulb','restaurant','menu_book','auto_stories','flight_takeoff
   'brush','hiking','coffee','sports_esports'];
 const ACCENTS=['#3e6b4f','#8a3324','#2b5e8c','#6a3d7c','#a06a00','#b03a5b','#4a5d23','#5d4037'];
 const PRESETS=[
-  /* La « super carte » : tous les types de champs, on retire ensuite ce qui ne sert pas. */
   {name:'Super-collection',icon:'widgets',accent:'#2b5e8c',paper:false,dict:false,feat:false,groupBy:'',
    fields:[
     {key:'title',label:'Titre',type:'text'},
@@ -1096,6 +1098,7 @@ function buildProfile(p){
   row.append(av,col);p.append(row);
   const size=((new Blob([localStorage.getItem(LS_KEY)||'']).size)/1024).toFixed(1);
   p.append(el('div','pop-note','Suite locale — données stockées dans ce navigateur ('+size+' Ko).'));
+  p.append(el('div','pop-note','Version '+APP_VERSION));
   p.append(el('div','pop-sep'));
   const reset=el('button','pop-item');reset.append(icon('restart_alt'),el('span','','Réinitialiser les données'));
   let armed=false;
@@ -1527,7 +1530,7 @@ function renderWorkshop(){
   head.innerHTML='';comp.innerHTML='';area.innerHTML='';
   area.style.removeProperty('--acc');area.className='';
   head.append(el('h1','mod-title','Atelier'));
-  head.append(el('p','view-sub','Fabriquez vos propres collections : partez de la Super-collection et retirez ce qui ne sert pas, ou composez de zéro.'));
+  head.append(el('p','view-sub','Partez de la Super-collection et retirez ce qui ne sert pas, ou composez de zéro.'));
   comp.append(moduleComposer('Créer une nouvelle collection…',()=>openBuilder(null),null));
   const grid=el('div','at-grid');
   state.collections.forEach((c,i)=>{
@@ -1566,8 +1569,10 @@ function renderWorkshop(){
   area.append(grid);
 }
 
-/* ================= Modal — saisie d'entrée ================= */
+/* ================= Modal — socle commun ================= */
 function closeModal(){$('#modalScrim').classList.add('hidden');$('#modalBox').innerHTML=''}
+/* LA CORRECTION : cette fonction lève le rideau. Sans elle, la fenêtre restait invisible. */
+function showModal(){$('#modalScrim').classList.remove('hidden')}
 function mkInput(ph,val,on){
   const i=el('input','f-in');i.placeholder=ph||'';i.value=val==null?'':val;
   i.oninput=()=>on(i.value);return i;
@@ -1639,6 +1644,7 @@ function seedFromNote(col,note){
 function openEntryModal(opt){
   try{
     closeModal();closePopover();
+    showModal(); /* <-- le rideau se lève */
     let col=opt.col||null, entry=opt.entry||null, note=opt.note||null;
     const editing=!!entry;
     const m={colId:col?col.id:null,multi:false,rows:[],v:{},arch:true};
@@ -1826,6 +1832,7 @@ function openEntryModal(opt){
 function openBuilder(existing){
   try{
     closeModal();closePopover();
+    showModal(); /* <-- le rideau se lève */
     const creating=!existing;
     const b=existing?JSON.parse(JSON.stringify(
       {name:existing.name,icon:existing.icon,accent:existing.accent,paper:existing.paper,
@@ -1845,9 +1852,9 @@ function openBuilder(existing){
       if(creating){
         const wrap=el('div','pub-segrow');const seg=el('div','seg');
         PRESETS.forEach(p=>{
-          const bt=el('button');
+          const bt=el('button',p===PRESETS[0]&&creating&&!b._touched?'on':'');
           bt.append(icon(p.icon),el('span','',p.name));
-          bt.onclick=()=>{Object.assign(b,presetCopy(p));drawB()};
+          bt.onclick=()=>{b._touched=true;Object.assign(b,presetCopy(p));drawB()};
           seg.append(bt);
         });
         const hint=el('div','opt-sub');hint.style.cssText='padding:8px 4px 0';
