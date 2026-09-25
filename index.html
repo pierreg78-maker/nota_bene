@@ -150,7 +150,7 @@ body.sb-collapsed #main{margin-left:74px}
 .nc-pin:hover{background:var(--hover)}
 .nc-image{margin:-16px -16px 12px;border-radius:8px 8px 0 0;overflow:hidden}
 .nc-image img{width:100%;display:block;aspect-ratio:var(--ar,4/3);object-fit:cover}
-/* Troncature compacte : titre max 3 lignes, corps max 3 lignes (v3.4) */
+/* Troncature compacte : titre max 3 lignes, corps max 3 lignes */
 .nc-title{font-size:16px;font-weight:500;line-height:1.4;margin-bottom:6px;padding-right:26px;word-break:break-word;
   display:-webkit-box;-webkit-line-clamp:3;line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .nc-body{font-size:13.5px;line-height:1.5;white-space:pre-wrap;word-break:break-word;
@@ -459,7 +459,7 @@ input[type=checkbox]{accent-color:var(--text);width:16px;height:16px;flex:none}
 <script>
 'use strict';
 /* ================= Version (visible dans le profil) ================= */
-const APP_VERSION='v3.4';
+const APP_VERSION='v3.5';
 console.log('Keep — '+APP_VERSION);
 
 /* ================= Utilitaires ================= */
@@ -486,7 +486,73 @@ function reminderText(ts){
 function normUrl(u){return /^https?:\/\//i.test(u)?u:'https://'+u}
 function hostOf(u){try{return new URL(normUrl(u)).hostname.replace(/^www\./,'')}catch(e){return u}}
 
-/* ================= Réglages d'affichage des cartes (v3.4) ================= */
+/* ================= Partage (v3.5) ================= */
+function noteToShareText(n){
+  const parts=[];
+  if(n.title)parts.push(n.title);
+  const body=n.items
+    ?n.items.map(it=>(it.done?'✓ ':'○ ')+it.text).join('\n')
+    :n.content;
+  if(body)parts.push(body);
+  if(n.link)parts.push(normUrl(n.link));
+  return parts.join('\n\n');
+}
+function shareTitle(n){return n.title||'Note partagée'}
+async function copyText(t){
+  try{await navigator.clipboard.writeText(t);return true}catch(e){}
+  try{
+    const ta=document.createElement('textarea');
+    ta.value=t;ta.style.cssText='position:fixed;opacity:0';
+    document.body.appendChild(ta);ta.select();
+    const ok=document.execCommand('copy');ta.remove();return ok;
+  }catch(e){return false}
+}
+async function dataUrlToFile(dataUrl,name){
+  const r=await fetch(dataUrl);
+  const b=await r.blob();
+  return new File([b],name,{type:b.type||'image/jpeg'});
+}
+async function shareNoteObj(n,anchor){
+  if(!n)return;
+  const text=noteToShareText(n);
+  if(!text){toast('Cette note est vide, rien à partager.');return}
+  /* Mobile : feuille de partage native du système (WhatsApp, Gmail, SMS…) */
+  if(navigator.share){
+    try{
+      const payload={title:shareTitle(n),text};
+      if(n.image){
+        try{
+          const f=await dataUrlToFile(n.image,'note-keep.jpg');
+          if(navigator.canShare&&navigator.canShare({files:[f]}))payload.files=[f];
+        }catch(_){}
+      }
+      await navigator.share(payload);
+      return;
+    }catch(err){
+      if(err&&err.name==='AbortError')return; /* annulé par l'utilisateur */
+      /* sinon : on retombe sur le menu de partage interne */
+    }
+  }
+  /* Ordinateur : menu WhatsApp / E-mail / Copier */
+  togglePop('share:'+n.id,anchor,p=>{
+    p.append(el('div','pop-head','Partager via'));
+    const wa=el('button','pop-item');wa.append(icon('chat'),el('span','','WhatsApp'));
+    wa.onclick=()=>{closePopover();
+      window.open('https://wa.me/?text='+encodeURIComponent(text),'_blank')};
+    const em=el('button','pop-item');em.append(icon('mail'),el('span','','E-mail'));
+    em.onclick=()=>{closePopover();
+      if(text.length>1900)toast('Texte long : certains clients mail peuvent le tronquer.');
+      location.href='mailto:?subject='+encodeURIComponent(shareTitle(n))
+        +'&body='+encodeURIComponent(text)};
+    const cp=el('button','pop-item');cp.append(icon('content_copy'),el('span','','Copier le texte'));
+    cp.onclick=async()=>{closePopover();
+      const ok=await copyText(text);
+      toast(ok?'Note copiée dans le presse-papiers':'Copie impossible dans ce navigateur')};
+    p.append(wa,em,cp);
+  });
+}
+
+/* ================= Réglages d'affichage des cartes ================= */
 const MAX_BODY_LINES=3;   /* lignes de texte visibles sur une carte */
 const MAX_TITLE_LINES=3;  /* lignes de titre visibles */
 const MAX_LIST_ITEMS=5;   /* éléments de checklist visibles */
@@ -842,7 +908,6 @@ function noteCard(n,i,animate){
     const list=el('div','nc-list');
     let shown=n.items.map((it,idx)=>({it,idx}));
     if(n.hideChecked)shown=shown.filter(s=>!s.it.done);
-    /* v3.4 : nombre d'éléments limité sur la carte (le contenu complet reste dans la note) */
     const capped=shown.slice(0,MAX_LIST_ITEMS);
     capped.forEach(({it,idx})=>{
       const r=el('div','nc-li'+(it.done?' done':''));
@@ -872,7 +937,8 @@ function noteCard(n,i,animate){
   }else{
     const f=el('div','nc-tools');
     f.append(tool('add_alarm','Rappel','reminder'),tool('image','Image','image'),
-      tool('link','Lien web','link'),tool('palette','Couleur','color'),
+      tool('link','Lien web','link'),tool('share','Partager','share'),
+      tool('palette','Couleur','color'),
       tool(n.archived?'unarchive':'archive',n.archived?'Désarchiver':'Archiver','archive'),
       tool('more_vert','Plus','more'));
     c.append(f);
@@ -941,10 +1007,11 @@ function handleAct(act,id,btn){
     case 'color':togglePop('color:'+id,btn,p=>buildPalette(p,id));break;
     case 'link':togglePop('link:'+id,btn,p=>buildLink(p,id));break;
     case 'reminder':togglePop('rem:'+id,btn,p=>buildReminder(p,id));break;
+    case 'share':shareNoteObj(n,btn);break;
     case 'archive':archiveToggle(id);break;
     case 'restore':n.trashed=false;n.trashedAt=null;save();render(false);toast('Note restaurée');break;
     case 'purge':purgeNote(id);break;
-    case 'more':togglePop('more:'+id,btn,p=>buildMenu(p,id));break;
+    case 'more':togglePop('more:'+id,btn,p=>buildMenu(p,id,btn));break;
   }
 }
 
@@ -1005,7 +1072,7 @@ function buildLink(p,id){
   setTimeout(()=>{inp.focus();inp.setSelectionRange(inp.value.length,inp.value.length)},60);
 }
 
-function buildMenu(p,id){
+function buildMenu(p,id,anchor){
   const n=byId(id);
   if(state.view==='trash'){
     popItem(p,'restore_from_trash','Restaurer',()=>{closePopover();
@@ -1014,6 +1081,7 @@ function buildMenu(p,id){
     return;
   }
   popItem(p,'ios_share','Envoyer vers…',()=>{closePopover();openEntryModal({note:n})});
+  popItem(p,'share','Partager la note',()=>{closePopover();shareNoteObj(n,anchor)});
   popItem(p,'label','Ajouter un libellé',()=>buildLabelsPicker(p,id));
   popItem(p,'checklist',n.items?'Masquer les cases à cocher':'Afficher les cases à cocher',
     ()=>{closePopover();convertChecklist(n)});
@@ -1168,7 +1236,7 @@ function buildEditor(n){
   const archBtn=mk(n.archived?'unarchive':'archive',n.archived?'Désarchiver':'Archiver',
     ()=>commitAndClose(nn=>archiveToggle(nn.id)));
   const delBtn=mk('delete','Mettre à la corbeille',()=>commitAndClose(nn=>trashNote(nn.id)));
-  const moreBtn=mk('more_vert','Plus',()=>togglePop('ed-more',moreBtn,p=>buildMenu(p,n.id)));
+  const moreBtn=mk('more_vert','Plus',()=>togglePop('ed-more',moreBtn,p=>buildMenu(p,n.id,moreBtn)));
   top.append(pin,palBtn,archBtn,delBtn,moreBtn);ed.append(top);
 
   const content=el('div','ed-content');content.id='edContent';
@@ -1177,12 +1245,14 @@ function buildEditor(n){
 
   const foot=el('div','ed-footer');
   const left=el('div');
-  const shareBtn=mk('ios_share','Envoyer vers…',()=>openEntryModal({note:n}));
+  const shareBtn=mk('share','Partager la note',()=>{
+    syncEditor(n);shareNoteObj(n,shareBtn)});
+  const sendBtn=mk('ios_share','Envoyer vers…',()=>openEntryModal({note:n}));
   const linkBtn=mk('link','Lien web',()=>togglePop('ed-linkbtn',linkBtn,p=>buildLink(p,n.id)));
   const remBtn=mk('add_alarm','Rappel',()=>togglePop('ed-rem',remBtn,p=>buildReminder(p,n.id)));
   const imgBtn=mk('image','Image',()=>{
     pendingImageTarget=isDraftNote(n)?'draft':n.id;$('#fileInput').click()});
-  left.append(shareBtn,linkBtn,remBtn,imgBtn);
+  left.append(shareBtn,sendBtn,linkBtn,remBtn,imgBtn);
   const closeB=el('button','text-btn','Fermer');closeB.onclick=closeEditor;
   const right=el('div','ed-footer-right');right.append(closeB);
   foot.append(left,right);ed.append(foot);
@@ -2292,7 +2362,7 @@ function endTouchDrag(e,perform){
     td.card.classList.remove('dragging');
     document.body.classList.remove('tdrag');
     gridArea.querySelectorAll('.drop-before,.drop-after')
-      .forEach(x=>x.classList.remove('drop-before','drop-after'));
+      .forEach(x=>x.classList.remove('dragging','drop-before','drop-after'));
   }
   tDrag=null;
 }
