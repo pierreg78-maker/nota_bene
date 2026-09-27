@@ -150,14 +150,14 @@ body.sb-collapsed #main{margin-left:74px}
 .nc-pin:hover{background:var(--hover)}
 .nc-image{margin:-16px -16px 12px;border-radius:8px 8px 0 0;overflow:hidden}
 .nc-image img{width:100%;display:block;aspect-ratio:var(--ar,4/3);object-fit:cover}
-/* Troncature compacte : titre max 3 lignes, corps max 3 lignes */
 .nc-title{font-size:16px;font-weight:500;line-height:1.4;margin-bottom:6px;padding-right:26px;word-break:break-word;
   display:-webkit-box;-webkit-line-clamp:3;line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .nc-body{font-size:13.5px;line-height:1.5;white-space:pre-wrap;word-break:break-word;
   display:-webkit-box;-webkit-line-clamp:3;line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .nc-list{display:flex;flex-direction:column;gap:7px}
 .nc-li{display:flex;gap:10px;align-items:flex-start;font-size:13.5px;line-height:1.45;word-break:break-word}
-.nc-li span{display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+/* v3.6 : les retours à la ligne des items s'affichent (clamp 2 lignes conservé) */
+.nc-li span{display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-line}
 .nc-li.done span{text-decoration:line-through;color:var(--nt2)}
 .nc-check{border:none;background:none;color:var(--nt);padding:0;width:20px;height:20px;flex:none;display:grid;place-items:center;border-radius:50%}
 .nc-check:hover{background:var(--hover)}
@@ -196,9 +196,11 @@ body.sb-collapsed #main{margin-left:74px}
   display:grid;place-items:center;flex:none;margin-top:2px}
 .ed-check:hover{background:var(--hover)}
 .ed-check .ms{font-size:19px}
-.ed-item input{flex:1;min-width:0;border:none;background:none;outline:none;font:inherit;font-size:14px;
-  color:var(--nt);padding:7px 0}
-.ed-item.done input{text-decoration:line-through;color:var(--nt2)}
+/* v3.6 : items de checklist = textarea multi-lignes auto-dimensionné */
+.ed-item input,.ed-item textarea{flex:1;min-width:0;border:none;background:none;outline:none;font:inherit;
+  font-size:14px;color:var(--nt);padding:7px 0;line-height:1.45;white-space:pre-line}
+.ed-item textarea{resize:none;overflow:hidden;min-height:32px;display:block}
+.ed-item.done textarea{text-decoration:line-through;color:var(--nt2)}
 .ed-del{width:28px;height:28px;border:none;background:none;color:var(--nt2);border-radius:50%;
   display:grid;place-items:center;opacity:0;flex:none;margin-top:4px}
 .ed-item:hover .ed-del{opacity:1}
@@ -459,8 +461,8 @@ input[type=checkbox]{accent-color:var(--text);width:16px;height:16px;flex:none}
 <script>
 'use strict';
 /* ================= Version (visible dans le profil) ================= */
-const APP_VERSION='v3.5';
-console.log('Nota Bene — '+APP_VERSION);
+const APP_VERSION='v3.6';
+console.log('Nota Bene - '+APP_VERSION);
 
 /* ================= Utilitaires ================= */
 const $=s=>document.querySelector(s);
@@ -486,12 +488,81 @@ function reminderText(ts){
 function normUrl(u){return /^https?:\/\//i.test(u)?u:'https://'+u}
 function hostOf(u){try{return new URL(normUrl(u)).hostname.replace(/^www\./,'')}catch(e){return u}}
 
-/* ================= Partage (v3.5) ================= */
+/* ================= Sons & notifications (v3.6) =================
+   Sons synthétisés via Web Audio : aucun fichier externe, marche hors ligne. */
+const SOUNDS=[['chime','Carillon'],['bell','Cloche'],['double','Double bip'],['alarm','Alarme'],['none','Silencieux']];
+let audioCtx=null;
+function getCtx(){
+  if(!audioCtx){try{audioCtx=new (window.AudioContext||window.webkitAudioContext)()}catch(e){return null}}
+  if(audioCtx&&audioCtx.state==='suspended')audioCtx.resume();
+  return audioCtx;
+}
+/* Réveille le contexte audio au premier geste (exigence des navigateurs) */
+document.addEventListener('pointerdown',()=>{try{getCtx()}catch(_){}},{once:true});
+function tone(ctx,t,freq,dur,type,gain){
+  const o=ctx.createOscillator(),g=ctx.createGain();
+  o.type=type||'sine';o.frequency.value=freq;
+  g.gain.setValueAtTime(0.0001,t);
+  g.gain.exponentialRampToValueAtTime(gain||0.16,t+0.012);
+  g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+  o.connect(g).connect(ctx.destination);
+  o.start(t);o.stop(t+dur+0.05);
+}
+function playSound(kind){
+  if(!kind||kind==='none')return;
+  const ctx=getCtx();if(!ctx)return;
+  const t0=ctx.currentTime+0.02;
+  switch(kind){
+    case 'chime':
+      tone(ctx,t0,880,0.5);tone(ctx,t0+0.13,1108.73,0.6);tone(ctx,t0+0.26,1318.51,0.9);break;
+    case 'bell':
+      tone(ctx,t0,987.77,1.3);tone(ctx,t0+0.02,494,1.5,'sine',0.09);tone(ctx,t0,1482,0.8,'sine',0.07);break;
+    case 'double':
+      tone(ctx,t0,740,0.13,'square',0.07);tone(ctx,t0+0.22,740,0.13,'square',0.07);break;
+    case 'alarm':
+      for(let i=0;i<6;i++)tone(ctx,t0+i*0.28,880,0.14,'square',0.08);break;
+  }
+}
+/* Notifications système */
+function notifySupported(){return 'Notification' in window}
+function askNotifyPermission(){
+  if(!notifySupported()){toast('Notifications non disponibles dans ce navigateur.');return}
+  Notification.requestPermission().then(p=>{
+    toast(p==='granted'?'Notifications système activées ✓'
+      :p==='denied'?'Notifications refusées — modifiables dans les réglages du navigateur'
+      :'Demande de permission en attente');
+  });
+}
+function fireNotification(n){
+  try{
+    if(!notifySupported()||Notification.permission!=='granted')return;
+    const body=((n.items?n.items.map(i=>i.text).join(' · '):n.content)||'').replace(/\s+/g,' ').slice(0,140)
+      ||'Ouvrez Nota Bene pour consulter la note.';
+    const iconEl=document.querySelector('link[rel="icon"]');
+    const notif=new Notification('Rappel — '+(n.title||'Note sans titre'),
+      {body,tag:'Nota Bene-'+n.id,icon:iconEl?iconEl.href:undefined});
+    notif.onclick=()=>{window.focus();notif.close();
+      if(n.trashed)return;state.view='notes';openEditor(n.id)};
+  }catch(e){/* Android/Chrome : notifications système indisponibles sans service worker */}
+}
+/* Titre qui clignote quand l'appli est en arrière-plan */
+let blinkTimer=null;
+function blinkTitle(){
+  if(!document.hidden)return;
+  clearInterval(blinkTimer);
+  let on=false;
+  blinkTimer=setInterval(()=>{document.title=on?'⏰ Rappel !':'Nota Bene';on=!on},1200);
+  const stop=()=>{clearInterval(blinkTimer);document.title='Nota Bene';
+    document.removeEventListener('visibilitychange',stop)};
+  document.addEventListener('visibilitychange',stop);
+}
+
+/* ================= Partage ================= */
 function noteToShareText(n){
   const parts=[];
   if(n.title)parts.push(n.title);
   const body=n.items
-    ?n.items.map(it=>(it.done?'✓ ':'○ ')+it.text).join('\n')
+    ?n.items.map(it=>(it.done?'✓ ':'○ ')+String(it.text).replace(/\n/g,'\n   ')).join('\n')
     :n.content;
   if(body)parts.push(body);
   if(n.link)parts.push(normUrl(n.link));
@@ -516,24 +587,21 @@ async function shareNoteObj(n,anchor){
   if(!n)return;
   const text=noteToShareText(n);
   if(!text){toast('Cette note est vide, rien à partager.');return}
-  /* Mobile : feuille de partage native du système (WhatsApp, Gmail, SMS…) */
   if(navigator.share){
     try{
       const payload={title:shareTitle(n),text};
       if(n.image){
         try{
-          const f=await dataUrlToFile(n.image,'note-keep.jpg');
+          const f=await dataUrlToFile(n.image,'note-Nota Bene.jpg');
           if(navigator.canShare&&navigator.canShare({files:[f]}))payload.files=[f];
         }catch(_){}
       }
       await navigator.share(payload);
       return;
     }catch(err){
-      if(err&&err.name==='AbortError')return; /* annulé par l'utilisateur */
-      /* sinon : on retombe sur le menu de partage interne */
+      if(err&&err.name==='AbortError')return;
     }
   }
-  /* Ordinateur : menu WhatsApp / E-mail / Copier */
   togglePop('share:'+n.id,anchor,p=>{
     p.append(el('div','pop-head','Partager via'));
     const wa=el('button','pop-item');wa.append(icon('chat'),el('span','','WhatsApp'));
@@ -553,10 +621,10 @@ async function shareNoteObj(n,anchor){
 }
 
 /* ================= Réglages d'affichage des cartes ================= */
-const MAX_BODY_LINES=3;   /* lignes de texte visibles sur une carte */
-const MAX_TITLE_LINES=2;  /* lignes de titre visibles */
-const MAX_LIST_ITEMS=3;   /* éléments de checklist visibles */
-const MAX_ITEM_LINES=2;   /* lignes max par élément de checklist */
+const MAX_BODY_LINES=3;
+const MAX_TITLE_LINES=3;
+const MAX_LIST_ITEMS=5;
+const MAX_ITEM_LINES=2;
 
 /* ================= Couleurs des notes ================= */
 const COLORS=[['default','Défaut'],['red','Cerise'],['orange','Corail'],['yellow','Jaune'],
@@ -632,8 +700,8 @@ function defaultCollections(lexItems,quoteItems){
 }
 
 /* ================= État ================= */
-const LS_KEY='keep-clone-v3';
-let state={notes:[],labels:[],collections:[],view:'notes',search:'',listMode:false};
+const LS_KEY='Nota Bene-clone-v3';
+let state={notes:[],labels:[],collections:[],view:'notes',search:'',listMode:false,reminderSound:'chime'};
 let draft=null, editingId=null, editorNote=null;
 let pendingImageTarget=null, dragId=null, toastTimer=null;
 
@@ -643,7 +711,7 @@ const isDraftNote=n=>!state.notes.includes(n);
 
 function save(){
   try{localStorage.setItem(LS_KEY,JSON.stringify({notes:state.notes,labels:state.labels,
-    collections:state.collections,
+    collections:state.collections,reminderSound:state.reminderSound||'chime',
     dark:document.documentElement.dataset.theme==='dark',listMode:state.listMode}))}
   catch(e){toast("Stockage local saturé : la donnée n'a pas pu être enregistrée.")}
 }
@@ -654,18 +722,21 @@ function load(){
       if(d&&Array.isArray(d.collections)){
         state.notes=d.notes||[];state.labels=d.labels||[];
         state.collections=d.collections.map(c=>Object.assign({items:[]},c));
+        state.reminderSound=d.reminderSound||'chime';
         state.listMode=!!d.listMode;if(d.dark)document.documentElement.dataset.theme='dark';return}}
-    const old=localStorage.getItem('keep-clone-v2');
+    const old=localStorage.getItem('Nota Bene-clone-v2');
     if(old){const d=JSON.parse(old);
       if(d&&Array.isArray(d.notes)){
         state.notes=d.notes;state.labels=d.labels||[];
         state.collections=defaultCollections(d.lex||[],d.quotes||[]);
+        state.reminderSound='chime';
         state.listMode=!!d.listMode;if(d.dark)document.documentElement.dataset.theme='dark';
         save();toast('Données V2 migrées vers l\u2019Atelier');return}}
   }catch(e){}
   seed();
 }
 function seed(){
+  state.reminderSound='chime';
   state.labels=[{id:'l1',name:'Travail'},{id:'l2',name:'Perso'},{id:'l3',name:'Cuisine'}];
   const now=Date.now(),day=864e5;
   const N=o=>Object.assign({id:uid(),title:'',content:'',items:null,color:'default',pinned:false,
@@ -1006,7 +1077,7 @@ function handleAct(act,id,btn){
     case 'image':pendingImageTarget=id;$('#fileInput').click();break;
     case 'color':togglePop('color:'+id,btn,p=>buildPalette(p,id));break;
     case 'link':togglePop('link:'+id,btn,p=>buildLink(p,id));break;
-    case 'reminder':togglePop('rem:'+id,btn,p=>buildReminder(p,id));break;
+    case 'reminder':togglePop('rem:'+id,btn,p=>buildReminder(p,id,btn));break;
     case 'share':shareNoteObj(n,btn);break;
     case 'archive':archiveToggle(id);break;
     case 'restore':n.trashed=false;n.trashedAt=null;save();render(false);toast('Note restaurée');break;
@@ -1144,7 +1215,7 @@ function buildManager(p,anchor){
   p.append(inp);
 }
 
-function buildReminder(p,id){
+function buildReminder(p,id,anchor){
   const n=byId(id);
   p.append(el('div','pop-head','Rappel'));
   const setRem=ts=>{n.reminder=ts;n.reminderFired=false;save();closePopover();render(false);
@@ -1171,6 +1242,46 @@ function buildReminder(p,id){
     setRem(new Date(Y,M-1,D,h,m).getTime());
   };
   acts.append(ok);p.append(acts);
+
+  /* --- v3.6 : choix du son (écoute au toucher, réglage mémorisé) --- */
+  p.append(el('div','pop-sep'));
+  const soundWrap=el('div');
+  const paintSounds=()=>{
+    soundWrap.innerHTML='';
+    soundWrap.append(el('div','pop-head','Son du rappel'));
+    SOUNDS.forEach(([k,name])=>{
+      const sel=(state.reminderSound||'chime')===k;
+      const b=el('button','pop-item');
+      b.append(icon(sel?'check_box':'check_box_outline_blank',sel),el('span','',name));
+      b.onclick=()=>{state.reminderSound=k;save();playSound(k);paintSounds()};
+      soundWrap.append(b);
+    });
+    soundWrap.append(el('div','pop-note','Touchez un son pour l\u2019écouter et le choisir.'));
+  };
+  paintSounds();
+  p.append(soundWrap);
+
+  /* --- v3.6 : notifications système --- */
+  p.append(el('div','pop-sep'));
+  if(notifySupported()){
+    if(Notification.permission==='granted'){
+      p.append(el('div','pop-note','🔔 Notifications système : activées ✓'));
+    }else if(Notification.permission==='denied'){
+      p.append(el('div','pop-note','🔔 Notifications bloquées par le navigateur.'));
+    }else{
+      const nb=el('button','pop-item');
+      nb.append(icon('notifications_active'),el('span','','Activer les notifications système'));
+      nb.onclick=()=>{
+        Notification.requestPermission().then(()=>{
+          closePopover();
+          togglePop('rem:'+id,anchor,p2=>buildReminder(p2,id,anchor));
+        });
+      };
+      p.append(nb);
+    }
+  }else{
+    p.append(el('div','pop-note','🔔 Notifications non prises en charge ici.'));
+  }
 }
 
 function buildProfile(p){
@@ -1249,7 +1360,7 @@ function buildEditor(n){
     syncEditor(n);shareNoteObj(n,shareBtn)});
   const sendBtn=mk('ios_share','Envoyer vers…',()=>openEntryModal({note:n}));
   const linkBtn=mk('link','Lien web',()=>togglePop('ed-linkbtn',linkBtn,p=>buildLink(p,n.id)));
-  const remBtn=mk('add_alarm','Rappel',()=>togglePop('ed-rem',remBtn,p=>buildReminder(p,n.id)));
+  const remBtn=mk('add_alarm','Rappel',()=>togglePop('ed-rem',remBtn,p=>buildReminder(p,n.id,remBtn)));
   const imgBtn=mk('image','Image',()=>{
     pendingImageTarget=isDraftNote(n)?'draft':n.id;$('#fileInput').click()});
   left.append(shareBtn,sendBtn,linkBtn,remBtn,imgBtn);
@@ -1288,7 +1399,8 @@ function fillEditorContent(container,n){
     n.items.forEach(it=>list.append(itemRow(n,it)));
     const add=el('button','ed-add-item');add.append(icon('add'),el('span','','Élément de liste'));
     add.onclick=()=>{const r=itemRow(n,{text:'',done:false});list.append(r);
-      r.querySelector('input').focus()};
+      const ta=r.querySelector('textarea');ta.focus();
+      requestAnimationFrame(()=>ta.dispatchEvent(new Event('input')))};
     container.append(list,add);
   }else{
     const b=el('textarea');b.id='edBody';b.placeholder='Prenez une note…';b.value=n.content;
@@ -1302,6 +1414,7 @@ function rebuildEditorContent(n){
   const c=el('div','ed-content');c.id='edContent';
   fillEditorContent(c,n);old.replaceWith(c);
 }
+/* v3.6 : item = textarea multi-lignes. Entrée = nouvel élément, Maj+Entrée = retour à la ligne. */
 function itemRow(n,it){
   const r=el('div','ed-item'+(it.done?' done':''));
   const cb=el('button','ed-check');cb.title=it.done?'Décocher':'Cocher';
@@ -1310,22 +1423,28 @@ function itemRow(n,it){
     const d=r.classList.contains('done');
     cb.innerHTML='';cb.append(icon(d?'check_box':'check_box_outline_blank',d));
     n.items=readEdItems();touchSave(n)};
-  const inp=el('input');inp.value=it.text;inp.placeholder='Élément de liste';
-  inp.oninput=()=>{n.items=readEdItems();touchSave(n)};
+  const inp=el('textarea');inp.rows=1;inp.value=it.text;inp.placeholder='Élément de liste';
+  const resize=()=>{inp.style.height='auto';inp.style.height=Math.max(32,inp.scrollHeight)+'px'};
+  inp.oninput=()=>{resize();n.items=readEdItems();touchSave(n)};
   inp.onkeydown=e=>{
-    if(e.key==='Enter'){e.preventDefault();
+    if(e.key==='Enter'&&!e.shiftKey){
+      e.preventDefault();
       if(!inp.value.trim())return;
       const nr=itemRow(n,{text:'',done:false});r.after(nr);
-      n.items=readEdItems();touchSave(n);nr.querySelector('input').focus()}
+      n.items=readEdItems();touchSave(n);
+      const ta=nr.querySelector('textarea');ta.focus();
+      requestAnimationFrame(()=>ta.dispatchEvent(new Event('input')));
+    }
     if(e.key==='Backspace'&&inp.value===''){
       const rows=[...$('#edItems').querySelectorAll('.ed-item')];
       if(rows.length<2)return;
       e.preventDefault();
       const prev=r.previousElementSibling,next=r.nextElementSibling;
       r.remove();n.items=readEdItems();touchSave(n);
-      (prev||next)&&((prev||next).querySelector('input').focus());
+      (prev||next)&&((prev||next).querySelector('textarea').focus());
     }
   };
+  requestAnimationFrame(resize);
   const del=el('button','ed-del');del.title='Supprimer cet élément';del.append(icon('close'));
   del.onclick=()=>{r.remove();n.items=readEdItems();touchSave(n)};
   r.append(cb,inp,del);
@@ -1333,7 +1452,7 @@ function itemRow(n,it){
 }
 function readEdItems(){
   return [...document.querySelectorAll('#edItems .ed-item')]
-    .map(r=>({text:r.querySelector('input').value,done:r.classList.contains('done')}));
+    .map(r=>({text:r.querySelector('textarea').value,done:r.classList.contains('done')}));
 }
 function autosize(t){t.style.height='auto';t.style.height=Math.max(150,t.scrollHeight)+'px'}
 function touchSave(n){n.edited=Date.now();if(!isDraftNote(n))save()}
@@ -1555,7 +1674,7 @@ function renderCollection(col,refocus){
   list.sort((a,b)=>String(a.values[pf.key]||'').localeCompare(String(b.values[pf.key]||''),'fr'));
   const emptyD=()=>{const d=el('div','empty');
     d.append(icon(col.icon),el('p','',q?'Aucun résultat.':col.items.length
-      ?'Aucun résultat.':'Aucune entrée pour l\u2019instant. Créez-en une ou envoyez une note depuis Keep.'));
+      ?'Aucun résultat.':'Aucune entrée pour l\u2019instant. Créez-en une ou envoyez une note depuis Nota Bene.'));
     return d};
   if(!list.length){area.append(emptyD());if(refocus)refocusInp('colSearch');return}
 
@@ -2386,17 +2505,21 @@ gridArea.addEventListener('contextmenu',e=>{
   }
 });
 
-/* ================= Rappels ================= */
+/* ================= Rappels (v3.6 : son + notification) ================= */
 function checkReminders(){
-  const now=Date.now();let changed=false;
+  const now=Date.now();let changed=false,firedAny=false;
   state.notes.forEach(n=>{
     if(n.reminder&&n.reminder<=now&&!n.reminderFired&&!n.trashed){
-      n.reminderFired=true;changed=true;
+      n.reminderFired=true;changed=true;firedAny=true;
+      fireNotification(n);
       toast('Rappel — '+(n.title||'Note sans titre'),'Ouvrir',()=>{
         if(n.trashed)return;state.view='notes';openEditor(n.id)});
     }
   });
-  if(changed)save();
+  if(changed){
+    save();
+    if(firedAny){playSound(state.reminderSound||'chime');blinkTitle()}
+  }
 }
 
 /* ================= Header & global ================= */
