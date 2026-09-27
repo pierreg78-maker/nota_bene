@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Nota Bene</title>
+<title>Keep</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='%23fbbc04' d='M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7z'/></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -156,7 +156,6 @@ body.sb-collapsed #main{margin-left:74px}
   display:-webkit-box;-webkit-line-clamp:3;line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .nc-list{display:flex;flex-direction:column;gap:7px}
 .nc-li{display:flex;gap:10px;align-items:flex-start;font-size:13.5px;line-height:1.45;word-break:break-word}
-/* v3.6 : les retours à la ligne des items s'affichent (clamp 2 lignes conservé) */
 .nc-li span{display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-line}
 .nc-li.done span{text-decoration:line-through;color:var(--nt2)}
 .nc-check{border:none;background:none;color:var(--nt);padding:0;width:20px;height:20px;flex:none;display:grid;place-items:center;border-radius:50%}
@@ -196,7 +195,6 @@ body.sb-collapsed #main{margin-left:74px}
   display:grid;place-items:center;flex:none;margin-top:2px}
 .ed-check:hover{background:var(--hover)}
 .ed-check .ms{font-size:19px}
-/* v3.6 : items de checklist = textarea multi-lignes auto-dimensionné */
 .ed-item input,.ed-item textarea{flex:1;min-width:0;border:none;background:none;outline:none;font:inherit;
   font-size:14px;color:var(--nt);padding:7px 0;line-height:1.45;white-space:pre-line}
 .ed-item textarea{resize:none;overflow:hidden;min-height:32px;display:block}
@@ -421,7 +419,7 @@ input[type=checkbox]{accent-color:var(--text);width:16px;height:16px;flex:none}
 <header id="topbar">
   <div class="tb-left">
     <button id="menuBtn" class="icon-btn" title="Menu principal"><span class="ms">menu</span></button>
-    <div class="brand"><span class="ms fill">lightbulb</span><span class="brand-name">Nota Bene</span></div>
+    <div class="brand"><span class="ms fill">lightbulb</span><span class="brand-name">Keep</span></div>
   </div>
   <div class="tb-search">
     <span class="ms">search</span>
@@ -461,8 +459,8 @@ input[type=checkbox]{accent-color:var(--text);width:16px;height:16px;flex:none}
 <script>
 'use strict';
 /* ================= Version (visible dans le profil) ================= */
-const APP_VERSION='v3.6';
-console.log('Nota Bene - '+APP_VERSION);
+const APP_VERSION='v3.7';
+console.log('Keep — '+APP_VERSION);
 
 /* ================= Utilitaires ================= */
 const $=s=>document.querySelector(s);
@@ -488,7 +486,7 @@ function reminderText(ts){
 function normUrl(u){return /^https?:\/\//i.test(u)?u:'https://'+u}
 function hostOf(u){try{return new URL(normUrl(u)).hostname.replace(/^www\./,'')}catch(e){return u}}
 
-/* ================= Sons & notifications (v3.6) =================
+/* ================= Sons & notifications =================
    Sons synthétisés via Web Audio : aucun fichier externe, marche hors ligne. */
 const SOUNDS=[['chime','Carillon'],['bell','Cloche'],['double','Double bip'],['alarm','Alarme'],['none','Silencieux']];
 let audioCtx=null;
@@ -533,17 +531,44 @@ function askNotifyPermission(){
       :'Demande de permission en attente');
   });
 }
+
+/* ================= Service worker (v3.7 : notifications Android) ================= */
+let swReg=null;
+function registerSW(){
+  if(!('serviceWorker' in navigator))return;
+  if(location.protocol!=='https:'&&location.hostname!=='localhost')return;
+  navigator.serviceWorker.register('./sw.js')
+    .then(reg=>{swReg=reg;
+      console.log('Service worker enregistré — notifications Android disponibles')})
+    .catch(err=>console.log('Service worker : '+err.message));
+}
+/* Le service worker demande l'ouverture d'une note (clic sur notification Android) */
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.addEventListener('message',e=>{
+    const d=e.data||{};
+    if(d.type==='open-note'&&d.id){
+      const n=byId(d.id);
+      if(n&&!n.trashed){state.view='notes';render(false);openEditor(d.id)}
+    }
+  });
+}
+
 function fireNotification(n){
+  if(!notifySupported()||Notification.permission!=='granted')return;
+  const title='Rappel — '+(n.title||'Note sans titre');
+  const body=((n.items?n.items.map(i=>String(i.text)).join(' · '):n.content)||'')
+    .replace(/\s+/g,' ').slice(0,140)||'Ouvrez Keep pour consulter la note.';
+  const iconEl=document.querySelector('link[rel="icon"]');
+  const opts={body,tag:'keep-'+n.id,icon:iconEl?iconEl.href:undefined,data:{noteId:n.id}};
+  /* Android : passe par le service worker (new Notification y est interdit) */
+  if(swReg&&swReg.showNotification){
+    try{swReg.showNotification(title,opts);return}catch(e){}
+  }
   try{
-    if(!notifySupported()||Notification.permission!=='granted')return;
-    const body=((n.items?n.items.map(i=>i.text).join(' · '):n.content)||'').replace(/\s+/g,' ').slice(0,140)
-      ||'Ouvrez Nota Bene pour consulter la note.';
-    const iconEl=document.querySelector('link[rel="icon"]');
-    const notif=new Notification('Rappel — '+(n.title||'Note sans titre'),
-      {body,tag:'Nota Bene-'+n.id,icon:iconEl?iconEl.href:undefined});
+    const notif=new Notification(title,opts);
     notif.onclick=()=>{window.focus();notif.close();
       if(n.trashed)return;state.view='notes';openEditor(n.id)};
-  }catch(e){/* Android/Chrome : notifications système indisponibles sans service worker */}
+  }catch(e){/* silencieux : le son + le toast restent là */}
 }
 /* Titre qui clignote quand l'appli est en arrière-plan */
 let blinkTimer=null;
@@ -551,8 +576,8 @@ function blinkTitle(){
   if(!document.hidden)return;
   clearInterval(blinkTimer);
   let on=false;
-  blinkTimer=setInterval(()=>{document.title=on?'⏰ Rappel !':'Nota Bene';on=!on},1200);
-  const stop=()=>{clearInterval(blinkTimer);document.title='Nota Bene';
+  blinkTimer=setInterval(()=>{document.title=on?'⏰ Rappel !':'Keep';on=!on},1200);
+  const stop=()=>{clearInterval(blinkTimer);document.title='Keep';
     document.removeEventListener('visibilitychange',stop)};
   document.addEventListener('visibilitychange',stop);
 }
@@ -592,7 +617,7 @@ async function shareNoteObj(n,anchor){
       const payload={title:shareTitle(n),text};
       if(n.image){
         try{
-          const f=await dataUrlToFile(n.image,'note-Nota Bene.jpg');
+          const f=await dataUrlToFile(n.image,'note-keep.jpg');
           if(navigator.canShare&&navigator.canShare({files:[f]}))payload.files=[f];
         }catch(_){}
       }
@@ -700,7 +725,7 @@ function defaultCollections(lexItems,quoteItems){
 }
 
 /* ================= État ================= */
-const LS_KEY='Nota Bene-clone-v3';
+const LS_KEY='keep-clone-v3';
 let state={notes:[],labels:[],collections:[],view:'notes',search:'',listMode:false,reminderSound:'chime'};
 let draft=null, editingId=null, editorNote=null;
 let pendingImageTarget=null, dragId=null, toastTimer=null;
@@ -724,7 +749,7 @@ function load(){
         state.collections=d.collections.map(c=>Object.assign({items:[]},c));
         state.reminderSound=d.reminderSound||'chime';
         state.listMode=!!d.listMode;if(d.dark)document.documentElement.dataset.theme='dark';return}}
-    const old=localStorage.getItem('Nota Bene-clone-v2');
+    const old=localStorage.getItem('keep-clone-v2');
     if(old){const d=JSON.parse(old);
       if(d&&Array.isArray(d.notes)){
         state.notes=d.notes;state.labels=d.labels||[];
@@ -1243,7 +1268,7 @@ function buildReminder(p,id,anchor){
   };
   acts.append(ok);p.append(acts);
 
-  /* --- v3.6 : choix du son (écoute au toucher, réglage mémorisé) --- */
+  /* --- Choix du son (écoute au toucher, réglage mémorisé) --- */
   p.append(el('div','pop-sep'));
   const soundWrap=el('div');
   const paintSounds=()=>{
@@ -1261,11 +1286,11 @@ function buildReminder(p,id,anchor){
   paintSounds();
   p.append(soundWrap);
 
-  /* --- v3.6 : notifications système --- */
+  /* --- Notifications système --- */
   p.append(el('div','pop-sep'));
   if(notifySupported()){
     if(Notification.permission==='granted'){
-      p.append(el('div','pop-note','🔔 Notifications système : activées ✓'));
+      p.append(el('div','pop-note','🔔 Notifications système : activées ✓'+(swReg?' (Android inclus)':'')));
     }else if(Notification.permission==='denied'){
       p.append(el('div','pop-note','🔔 Notifications bloquées par le navigateur.'));
     }else{
@@ -1295,6 +1320,9 @@ function buildProfile(p){
   const size=((new Blob([localStorage.getItem(LS_KEY)||'']).size)/1024).toFixed(1);
   p.append(el('div','pop-note','Suite locale — données stockées dans ce navigateur ('+size+' Ko).'));
   p.append(el('div','pop-note','Version '+APP_VERSION));
+  p.append(el('div','pop-note',swReg
+    ?'🔔 Service worker : actif ✓ — notifications Android prêtes'
+    :'🔔 Service worker : inactif (fichier local, ou sw.js absent en ligne)'));
   p.append(el('div','pop-sep'));
   const reset=el('button','pop-item');reset.append(icon('restart_alt'),el('span','','Réinitialiser les données'));
   let armed=false;
@@ -1414,7 +1442,7 @@ function rebuildEditorContent(n){
   const c=el('div','ed-content');c.id='edContent';
   fillEditorContent(c,n);old.replaceWith(c);
 }
-/* v3.6 : item = textarea multi-lignes. Entrée = nouvel élément, Maj+Entrée = retour à la ligne. */
+/* Item = textarea multi-lignes. Entrée = nouvel élément, Maj+Entrée = retour à la ligne. */
 function itemRow(n,it){
   const r=el('div','ed-item'+(it.done?' done':''));
   const cb=el('button','ed-check');cb.title=it.done?'Décocher':'Cocher';
@@ -1674,7 +1702,7 @@ function renderCollection(col,refocus){
   list.sort((a,b)=>String(a.values[pf.key]||'').localeCompare(String(b.values[pf.key]||''),'fr'));
   const emptyD=()=>{const d=el('div','empty');
     d.append(icon(col.icon),el('p','',q?'Aucun résultat.':col.items.length
-      ?'Aucun résultat.':'Aucune entrée pour l\u2019instant. Créez-en une ou envoyez une note depuis Nota Bene.'));
+      ?'Aucun résultat.':'Aucune entrée pour l\u2019instant. Créez-en une ou envoyez une note depuis Keep.'));
     return d};
   if(!list.length){area.append(emptyD());if(refocus)refocusInp('colSearch');return}
 
@@ -2505,7 +2533,7 @@ gridArea.addEventListener('contextmenu',e=>{
   }
 });
 
-/* ================= Rappels (v3.6 : son + notification) ================= */
+/* ================= Rappels (son + notification + titre clignotant) ================= */
 function checkReminders(){
   const now=Date.now();let changed=false,firedAny=false;
   state.notes.forEach(n=>{
@@ -2520,6 +2548,14 @@ function checkReminders(){
     save();
     if(firedAny){playSound(state.reminderSound||'chime');blinkTitle()}
   }
+}
+/* Ouverture directe d'une note via #note=… (depuis une notification Android) */
+function openFromHash(){
+  const m=(location.hash||'').match(/^#note=([A-Za-z0-9]+)$/);
+  if(!m)return;
+  history.replaceState(null,'',location.pathname+location.search);
+  const n=byId(m[1]);
+  if(n&&!n.trashed){state.view='notes';render(false);openEditor(m[1])}
 }
 
 /* ================= Header & global ================= */
@@ -2564,6 +2600,8 @@ load();
 render(true);
 checkReminders();
 setInterval(checkReminders,20000);
+registerSW();
+openFromHash();
 if(document.fonts&&document.fonts.ready)document.fonts.ready.then(()=>render(false));
 </script>
 </body>
